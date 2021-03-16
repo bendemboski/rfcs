@@ -54,7 +54,7 @@ We're seeking to address two specific new use cases, although the design should 
 
 #### Page objects
 
-Page objects can be usded as DOM element descriptors and passed directly to DOM helpers:
+Page objects can be used as DOM element descriptors and passed directly to DOM helpers:
 
 ```js
 assert.dom(pageObject.listItems).exists({ count: 4 });
