@@ -58,7 +58,9 @@ Page objects can be used as DOM element descriptors and passed directly to DOM h
 
 ```js
 assert.dom(pageObject.listItems).exists({ count: 4 });
+
 await click(pageObject.listItems[2].checkbox);
+
 assert.dom(pageObject.listItems[2].checkbox).isChecked();
 ```
 
@@ -71,7 +73,9 @@ DOM element descriptors can be constructed directly from `Element`s:
 ```ts
 let element = someOtherLibrary.getGraphElement();
 let descriptor = createDOMDescriptor({ element, description: 'graph element' });
+
 await click(descriptor);
+
 assert.dom(descriptor).hasClass('selected');
 ```
 
@@ -84,10 +88,12 @@ class MyDescriptor {
   }
   description = 'second list item';
 }
-
 let descriptor = new MyDescriptor();
+
 assert.dom(descriptor).doesNotExist();
+
 await click('.add-list-item');
+
 assert.dom(descriptor).exists();
 ```
 
@@ -95,45 +101,45 @@ This will enable more flexible queries than CSS selectors support without losing
 
 ### Namespacing constraints
 
-The page object use case introduces a significant constraint. Page objects are necessarily extensible, allowing users to define their own property on them, so a DOM element descriptor interface that relies on properties stored on the object implementing the interface risks conflicts with user-defined properties. For example, if a user implements an album info page object for a portion of page that shows information on an album, it might have a `description` property exposing the rendered text of the album's description, which would mean that it could not also implement an interface that requires it to expose the DOM element descriptor's description under a `description` property.
+The page object use case introduces a significant constraint. Page objects are necessarily extensible, allowing users to define their own properties on them, so a DOM element descriptor interface that relies on properties stored on the object implementing the interface risks conflicts with user-defined properties. For example, if a user implements an album info page object for a page that shows information on an album, it might have a `description` property exposing the rendered text of the album's description, which would mean that it could not also implement an interface that requires it to expose the DOM element descriptor's description under a `description` property.
 
-To address this, we conceive of DOM element descriptors as arbitrary objects whose descriptor data is registered and stored in some private fashion that avoids namespace concerns (e.g. in an external `WeakMap`).
+To address this, we conceive of DOM element descriptors as arbitrary objects whose descriptor data is registered and stored in some private fashion that avoids namespace concerns (e.g. in a `WeakMap`).
 
 ### The design
 
-This RFC proposes implementing a library that exports two core functions, and several other convenience methods to improve ergonomics. The core functions are:
+This RFC proposes implementing a library that exports two core functions, and several other convenience methods to improve ergonomics.
 
 #### Core functions
 
 ```ts
 interface IDOMElementDescriptor {}
 
-interface DOMElementDescriptorData {
+interface DescriptorData {
   element?: Element | null;
   elements?: Element[];
   description?: string;
 }
 
-function registerDescriptorData(descriptor: IDOMElementDescriptor, data: DOMElementDescriptorData): void;
-function lookupDescriptorData(descriptor: IDOMElementDescriptor): DOMElementDescriptorData;
+function registerDescriptorData(descriptor: IDOMElementDescriptor, data: DescriptorData): void;
+function lookupDescriptorData(descriptor: IDOMElementDescriptor): DescriptorData;
 ```
 
-(the interfaces have been simplified a bit for illustrative purposes -- in particular, `DOMElementDescriptorData` would need to enforce that at least one of `element` and `elements` is defined)
+(the interfaces have been simplified a bit for illustrative purposes -- in particular, `DescriptorData` would need to enforce that at least one of `element` and `elements` is defined)
 
-`IDOMElementDescriptor` is a "no-op interface" -- it has no properties or methods, and only exists to support typing. So typing aside, it can be thought of as just `object`.
+`IDOMElementDescriptor` is a "no-op interface" -- it has no properties or methods, and only exists to support typing. So typescript concerns aside, it can be thought of as just `object`.
 
-`DOMElementDescriptorData` is a type that contains an `element` property and/or an `elements` property, and also an optional `description` property. The `element` and `elements` properties exist to support usage in both single-element contexts (the equivalent of passing a selector to `querySelector()`) and multi-element contexts (the equivalent of passing a selector to `querySelectorAll()`). At least one of them must be defined, and both may be defined. If only the `element` property is defined, then multi-element contexts should act as if the `elements` property were defined to be either an empty array or a singleton array, depending on whether the `element` property evaluates to `null` or an `Element`. If only the `elements` property is defined, then single-element contexts should act as if `element` were defined to be the first element of the `elements` property, or `null` if the `elements` property evaluates to an empty array. To illustrate further, here are two possible implementations of functions to resolve descrptors to DOM elements:
+`DescriptorData` is a type that contains an `element` property and/or an `elements` property, and also an optional `description` property. The `element` and `elements` properties exist to support usage in both single-element contexts (the equivalent of passing a selector to `querySelector()`) and multi-element contexts (the equivalent of passing a selector to `querySelectorAll()`). At least one of them must be defined, and both may be defined. If only the `element` property is defined, then multi-element contexts should act as if the `elements` property were defined to be either an empty array or a singleton array, depending on whether the `element` property evaluates to `null` or an `Element`. If only the `elements` property is defined, then single-element contexts should act as if `element` were defined to be the first element of the `elements` property, or `null` if the `elements` property evaluates to an empty array. To illustrate further, here are two possible implementations of functions to resolve descriptors to DOM elements:
 
 ```ts
-function getDescriptorElement(data: DOMElementDescriptorData): Element | null {
+function getDescriptorElement(data: DescriptorData): Element | null {
   if (data.element !== undefined) {
     return data.element;
   } else {
-    return data.elements[0];
+    return data.elements[0] || null;
   }
 }
 
-function getDescriptorElements(data: DOMElementDescriptorData): Element[] {
+function getDescriptorElements(data: DescriptorData): Element[] {
   if (data.elements) {
     return data.elements;
   } else {
@@ -143,7 +149,7 @@ function getDescriptorElements(data: DOMElementDescriptorData): Element[] {
 }
 ```
 
-It would be possible to only support an `elements` property and always have single-element contexts determine their element as described above, but since the vast majority of current DOM helpers are single-element, we allow `DOMElementDescriptorData` instances to define both to allow optimizations, e.g. calling `querySelector()` instead of `querySelectorAll()` when `element` is accessed.
+It would be possible to only support an `elements` property and always have single-element contexts determine their element as described above, but since the vast majority of current DOM helpers are single-element, we allow `DescriptorData` instances to define both to allow optimizations, e.g. a class implementing `element` and `elements` as getters could call `querySelector()` instead of `querySelectorAll()` when `element` is accessed.
 
 Producers of DOM element descriptors, like page objects or test code producing ad-hoc DOM element descriptors, will use `registerDescriptorData()` to associate data with descriptors, and DOM helpers that are passed descriptors will use `lookupDescriptorData()` to retrieve the data for a given descriptor.
 
@@ -152,7 +158,7 @@ Producers of DOM element descriptors, like page objects or test code producing a
 The library will include a convenience function for creating ad-hoc DOM element descriptors:
 
 ```ts
-function createDescriptor(data: DOMElementDescriptorData): IDOMElementDescriptor
+function createDescriptor(data: DescriptorData): IDOMElementDescriptor
 ```
 
 which would create an `IDOMElementDescriptor`, use it to register the data, then return it. No equivalent is required for page objects, as the expectation is that they will themselves be `IDOMElementDescriptors`, so they will only need to perform the registration step from their constructor.
@@ -160,17 +166,17 @@ which would create an `IDOMElementDescriptor`, use it to register the data, then
 The library will also include some functions for use by DOM helpers when using DOM element descriptors to access the DOM. They can use `lookupDescriptorData()` directly, but as mentioned above, that would involve some "boilerplate" code for resolving the data to actual DOM elements in single- or multi-element contexts, since the descriptor data might only have one of `element` or `elements` defined. So the library will implement
 
 ```ts
-function resolveDOMElement(target: IDOMElementDescriptor | DOMElementDescriptorData): Element | null;
-function resolveDOMElements(target: IDOMElementDescriptor | DOMElementDescriptorData): Element[];
+function resolveDOMElement(target: IDOMElementDescriptor | DescriptorData): Element | null;
+function resolveDOMElements(target: IDOMElementDescriptor | DescriptorData): Element[];
 ```
 
 It may make sense to implement some kind of
 
 ```ts
-function getDescription(target: IDOMElementDescriptor | DOMElementDescriptorData): string;
+function getDescription(target: IDOMElementDescriptor | DescriptorData): string;
 ```
 
-function for returning the descriptor's `description` or deriving some kind of reasonable default description from the descriptors elements, but that's outside the scope of this RFC, and only mentioned here to help paint the broader picture.
+function for returning the descriptor's `description` or deriving some kind of reasonable default description from the descriptors elements, but that's outside the scope of this RFC, and only mentioned here to help paint the broader picture. It may also make sense to implement additional types and helpers to streamline the boilerplate arguments-resolving logic in DOM helpers that accept `Element`s, CSS selector `string`s, and `IDOMElementDescriptors`.
 
 ## How we teach this
 
@@ -197,7 +203,7 @@ Instead of using a private data storage to associate the descriptor data with th
 export const DESCRIPTOR_DATA = Symbol('descriptor data');
 
 export interface IDOMElementDescriptor {
-  [DESCRIPTOR_DATA]: DOMElementDescriptorData;
+  [DESCRIPTOR_DATA]: DescriptorData;
 }
 ```
 
@@ -205,7 +211,7 @@ This is maybe a slightly more familiar pattern to some, and might make debugging
 
 ### One interface, three symbols
 
-We could get rid of the `DOMElementDescriptor` interface entirely and modify the `IDOMElementDescriptor` interface to store `element`, `elements`, and `description` on properties keyed by three different public `Symbol`s. This doesn't seem to confer any real benefits that aren't captured by the primary proposal or the `Symbol for data storage` alternative, and makes ad-hoc descriptors less ergonomic:
+We could get rid of the `DescriptorData` type entirely and modify the `IDOMElementDescriptor` interface to store `element`, `elements`, and `description` on properties keyed by three different public `Symbol`s. This doesn't seem to confer any real benefits that aren't captured by the primary proposal or the `Symbol for data storage` alternative, and makes ad-hoc descriptors less ergonomic:
 
 ```ts
 let element = someOtherLibrary.getGraphElement();
